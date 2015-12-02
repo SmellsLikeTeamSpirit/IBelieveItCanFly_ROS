@@ -56,15 +56,8 @@ int main(int argc, char *argv[])
             accptr.accept(sock);
             ROS_INFO("New connection from %s", sock.remote_endpoint().address().to_string().c_str());
             ros::Time start = ros::Time::now();
-            bool dropped = false;
-            while(sock.is_open() && !dropped) {
-                /*if(!sock.available()) {
-                    if((ros::Time::now() - start).toSec() > 30) {
-                        ROS_WARN("Timeout");
-                        dropped = true;
-                    }
-                    continue;
-                }*/
+
+            while(sock.is_open()) {
 
                 uint8_t joystick;
                 boost::system::error_code ec;
