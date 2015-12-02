@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package>
+  <name>ibelieveitcanfly</name>
+  <version>0.0.0</version>
+  <description>The ibeliveitcanfly package</description>
+
+  <maintainer email="ongun.kanat@gmail.com">Ongun Kanat</maintainer>
+  <maintainer email="ilkanengin@gmail.com">Ilkan Engin</maintainer>
+  <maintainer email="alparslantozan@gmail.com">Alparslan Tozan</maintainer>
+
+  <license>DWTFYW</license>
+  <buildtool_depend>catkin</buildtool_depend>
+  <build_depend>geometry_msgs</build_depend>
+  <build_depend>roscpp</build_depend>
+  <build_depend>std_msgs</build_depend>
+  <run_depend>geometry_msgs</run_depend>
+  <run_depend>roscpp</run_depend>
+  <run_depend>std_msgs</run_depend>
+
+  <export>
+  </export>
+</package>
