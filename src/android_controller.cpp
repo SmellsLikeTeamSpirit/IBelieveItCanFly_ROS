@@ -4,8 +4,7 @@
 #include <ros/ros.h>
 #include <geometry_msgs/Twist.h>
 #include <boost/asio.hpp>
-
-
+#include <signal.h>
 
 using namespace std;
 using boost::asio::ip::tcp;
@@ -28,6 +27,10 @@ void endianconvert(uint8_t *in) {
     }
 }
 
+void sigint_handler(int sig) {
+    ROS_INFO("Exiting");
+    exit(EXIT_SUCCESS);
+}
 
 int main(int argc, char *argv[])
 {
@@ -36,36 +39,59 @@ int main(int argc, char *argv[])
 
     ros::Publisher speedPub = _nh.advertise<geometry_msgs::Twist>("/cmd_vel", 10);
 
+
+    signal(SIGINT, sigint_handler);
+
+    ROS_INFO("Starting server...");
+
     try
     {
         boost::asio::io_service ioserv;
         tcp::acceptor accptr(ioserv, tcp::endpoint(tcp::v4(), _PORT));
 
         while(ros::ok()) {
+
+            ROS_INFO("Waiting for client");
             tcp::socket sock(ioserv);
             accptr.accept(sock);
+            ROS_INFO("New connection from %s", sock.remote_endpoint().address().to_string().c_str());
             ros::Time start = ros::Time::now();
             bool dropped = false;
             while(sock.is_open() && !dropped) {
-                //sock.write_some(buffer(sense, sizeof(sense)));
-                if(!sock.available()) {
-                    //char sense[5] = "rual";
-
-                    if((ros::Time::now() - start).toSec() > 30)
+                /*if(!sock.available()) {
+                    if((ros::Time::now() - start).toSec() > 30) {
+                        ROS_WARN("Timeout");
                         dropped = true;
+                    }
                     continue;
-                }
+                }*/
 
                 uint8_t joystick;
-                sock.read_some(boost::asio::buffer(static_cast<void*>(&joystick), sizeof(char)));
+                boost::system::error_code ec;
+                boost::asio::read(sock, boost::asio::buffer(static_cast<void*>(&joystick), sizeof(char)), ec);
+                if(ec == boost::asio::error::eof) {
+                    ROS_WARN("Remote closed connection");
+                    break;
+                }
+
                 uint8_t __angle[8], __power[8];
-                sock.read_some(boost::asio::buffer(static_cast<void*>(__angle), sizeof(__angle)));
+                boost::asio::read(sock, boost::asio::buffer(static_cast<void*>(__angle), sizeof(__angle)), ec);
+                if(ec == boost::asio::error::eof) {
+                    ROS_WARN("Remote closed connection");
+                    break;
+                }
                 endianconvert(__angle);
-                sock.read_some(boost::asio::buffer(static_cast<void*>(__power), sizeof(__power)));
+                boost::asio::read(sock, boost::asio::buffer(static_cast<void*>(__power), sizeof(__power)), ec);
+                if(ec == boost::asio::error::eof) {
+                    ROS_WARN("Remote closed connection");
+                    break;
+                }
                 endianconvert(__power);
                 double angle = *((double*)__angle);
                 double power = *((double*)__power);
+
                 ROS_INFO("From jostick(%d) Angle : %f Power %f", (int)joystick, angle, power);
+
                 if(joystick == 1) {
                     if(!power == 0.0) {
                         if(angle < PI_2 && angle > -PI_2 ) {
@@ -136,11 +162,13 @@ int main(int argc, char *argv[])
                 start = ros::Time::now();
             }
             sock.close();
+            ROS_WARN("Disconnecting");
         }
     }
     catch (std::exception exc)
     {
-
+        ROS_ERROR("Exception thrown: %s", exc.what());
+        exit(EXIT_FAILURE);
     }
 
     return 0;

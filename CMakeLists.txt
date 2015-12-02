@@ -7,8 +7,6 @@ find_package(catkin REQUIRED COMPONENTS
   std_msgs
 )
 
-find_package(Qt4 REQUIRED COMPONENTS QtCore QtNetwork)
-include(${QT_USE_FILE})
 catkin_package(
 #  INCLUDE_DIRS include
 #  LIBRARIES ibelieveitcanfly
@@ -30,7 +28,7 @@ include_directories(
 add_executable(android_controller src/android_controller.cpp)
 add_dependencies(android_controller ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 #target_compile_options(android_controller -std=c++11)
-target_link_libraries(android_controller ${catkin_LIBRARIES} ${QT_LIBRARIES})
+target_link_libraries(android_controller ${catkin_LIBRARIES} )
 
 ## Declare a C++ library
 # add_library(ibelieveitcanfly
