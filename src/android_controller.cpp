@@ -4,12 +4,25 @@
 #include <ros/ros.h>
 #include <geometry_msgs/Twist.h>
 #include <boost/asio.hpp>
+#include <boost/thread.hpp>
 #include <signal.h>
+#include <deque>
 
 using namespace std;
 using boost::asio::ip::tcp;
 
+struct data_t
+{
+    uint8_t joystick;
+    double power;
+    double angle;
+    ros::Time time;
+};
+
 geometry_msgs::Twist message;
+boost::mutex queue_mutex;
+boost::mutex connection_mutex;
+bool connected = false;
 const short _PORT = 7575;
 
 const double PI  = M_PI;
@@ -32,6 +45,100 @@ void sigint_handler(int sig) {
     exit(EXIT_SUCCESS);
 }
 
+void execute_worker(deque<data_t> *process_queue, ros::Publisher* speedPub)
+{
+    while(true){
+        connection_mutex.lock();
+        if(!connected){
+            connection_mutex.unlock();
+            break;
+        }
+        connection_mutex.unlock();
+
+        data_t current_data;
+
+        queue_mutex.lock();
+        if(!process_queue->empty()){
+            current_data = process_queue->front();
+            process_queue->pop_front();
+        }
+        else{
+            queue_mutex.unlock();
+            continue;
+        }
+        queue_mutex.unlock();
+
+        if(current_data.joystick == 1) {
+            if(!current_data.power == 0.0) {
+                if(current_data.angle < PI_2 && current_data.angle > -PI_2 ) {
+                    message.linear.x = current_data.power  / 200;
+                    message.linear.y = 0;
+                    message.linear.z = 0;
+
+                    message.angular.x = 0;
+                    message.angular.y = 0;
+                    message.angular.z = current_data.angle * 0.5;
+                }
+                else {
+                    message.linear.x =  -(current_data.power  / 200);
+                    message.linear.y = 0;
+                    message.linear.z = 0;
+                    if(current_data.angle < 0) {
+                        message.angular.x = 0;
+                        message.angular.y = 0;
+                        message.angular.z = -PI - current_data.angle;
+                    }
+                    else {
+                        message.angular.x = 0;
+                        message.angular.y = 0;
+                        message.angular.z = PI - current_data.angle;
+                    }
+                }
+            }
+            else {
+                message.linear.x = 0;
+                message.linear.y = 0;
+                message.linear.z = 0;
+
+                message.angular.x = 0;
+                message.angular.y = 0;
+                message.angular.z = 0;
+            }
+        }
+        else if(current_data.joystick == 2) {
+            if(current_data.angle < PI_4 && current_data.angle > -PI_4) {
+                message.linear.x = 0;
+                message.linear.y = 0;
+                message.linear.z = current_data.power / 200;
+
+                message.angular.x = 0;
+                message.angular.y = 0;
+                message.angular.z = 0;
+            }
+            else if((current_data.angle > PI_3_4 && current_data.angle < PI)
+                    || (current_data.angle < -PI_3_4 && current_data.angle > -PI) ) {
+                message.linear.x = 0;
+                message.linear.y = 0;
+                message.linear.z = - current_data.power / 200;
+
+                message.angular.x = 0;
+                message.angular.y = 0;
+                message.angular.z = 0;
+            }
+            else {
+                message.linear.x = 0;
+                message.linear.y = 0;
+                message.linear.z = 0;
+
+                message.angular.x = 0;
+                message.angular.y = 0;
+                message.angular.z = (current_data.angle * current_data.power) / 200 ;
+            }
+        }
+        speedPub->publish(message);
+    }
+}
+
 int main(int argc, char *argv[])
 {
     ros::init(argc, argv, "android_controller_node");
@@ -41,6 +148,8 @@ int main(int argc, char *argv[])
 
 
     signal(SIGINT, sigint_handler);
+
+    deque<data_t> process_queue;
 
     ROS_INFO("Starting server...");
 
@@ -56,6 +165,11 @@ int main(int argc, char *argv[])
             accptr.accept(sock);
             ROS_INFO("New connection from %s", sock.remote_endpoint().address().to_string().c_str());
             ros::Time start = ros::Time::now();
+
+            connection_mutex.lock();
+            connected=true;
+            connection_mutex.unlock();
+            boost::thread worker_thread(execute_worker, &process_queue, &speedPub);
 
             while(sock.is_open()) {
 
@@ -85,76 +199,21 @@ int main(int argc, char *argv[])
 
                 ROS_INFO("From jostick(%d) Angle : %f Power %f", (int)joystick, angle, power);
 
-                if(joystick == 1) {
-                    if(!power == 0.0) {
-                        if(angle < PI_2 && angle > -PI_2 ) {
-                            message.linear.x = power / 200;
-                            message.linear.y = 0;
-                            message.linear.z = 0;
+                data_t data;
+                data.joystick=joystick;
+                data.angle=angle;
+                data.power=power;
+                data.time=ros::Time::now();
+                queue_mutex.lock();
+                process_queue.push_back(data);
+                queue_mutex.unlock();
 
-                            message.angular.x = 0;
-                            message.angular.y = 0;
-                            message.angular.z = angle * 0.5;
-                        }
-                        else {
-                            message.linear.x =  -(power / 200);
-                            message.linear.y = 0;
-                            message.linear.z = 0;
-                            if(angle < 0) {
-                                message.angular.x = 0;
-                                message.angular.y = 0;
-                                message.angular.z = -PI - angle;
-                            }
-                            else {
-                                message.angular.x = 0;
-                                message.angular.y = 0;
-                                message.angular.z = PI - angle;
-                            }
-                        }
-                    }
-                    else {
-                        message.linear.x = 0;
-                        message.linear.y = 0;
-                        message.linear.z = 0;
-
-                        message.angular.x = 0;
-                        message.angular.y = 0;
-                        message.angular.z = 0;
-                    }
-                }
-                else if(joystick == 2) {
-                    if(angle < PI_4 && angle > -PI_4) {
-                        message.linear.x = 0;
-                        message.linear.y = 0;
-                        message.linear.z = power / 200;
-
-                        message.angular.x = 0;
-                        message.angular.y = 0;
-                        message.angular.z = 0;
-                    }
-                    else if((angle > PI_3_4 && angle < PI) || (angle < -PI_3_4 && angle > -PI) ) {
-                        message.linear.x = 0;
-                        message.linear.y = 0;
-                        message.linear.z = - power / 200;
-
-                        message.angular.x = 0;
-                        message.angular.y = 0;
-                        message.angular.z = 0;
-                    }
-                    else {
-                        message.linear.x = 0;
-                        message.linear.y = 0;
-                        message.linear.z = 0;
-
-                        message.angular.x = 0;
-                        message.angular.y = 0;
-                        message.angular.z = (angle * power) / 200 ;
-                    }
-                }
-                speedPub.publish(message);
                 start = ros::Time::now();
             }
             sock.close();
+            connection_mutex.lock();
+            connected=false;
+            connection_mutex.unlock();
             ROS_WARN("Disconnecting");
         }
     }
