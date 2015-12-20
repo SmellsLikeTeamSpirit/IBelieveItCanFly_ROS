@@ -7,6 +7,7 @@
 #include <boost/thread.hpp>
 #include <signal.h>
 #include <deque>
+#include <cmath>
 
 using namespace std;
 using boost::asio::ip::tcp;
@@ -32,6 +33,8 @@ const double PI  = M_PI;
 const double PI_2 = PI / 2;
 const double PI_4 = PI / 4;
 const double PI_3_4 =  3 * PI / 4;
+const double straight_low_point =0.1;
+const double straight_high_point =0.7;
 
 
 void endianconvert(uint8_t *in) {
@@ -57,6 +60,9 @@ void sigint_handler(int sig) {
 
 void execute_worker(deque<data_t> *process_queue, ros::Publisher* speedPub)
 {
+    double target_distance = 0.0;
+    double target_angle = 0.0;
+    ros::Time previous_time;
     while(true){
         connection_mutex.lock();
         if(!connected){
@@ -147,6 +153,28 @@ void execute_worker(deque<data_t> *process_queue, ros::Publisher* speedPub)
                 message.angular.y = 0;
                 message.angular.z = (current_data.angle * current_data.power) / 200 ;
             }
+        }
+        else if(current_data.joystick == 3) {
+            target_distance = current_data.power;
+            ros::Rate frequency(10);
+            while(true){
+                double time_ellapsed = (ros::Time::now()-previous_time).toSec();
+                double new_target_distance = target_distance - time_ellapsed*message.linear.x;
+                message.linear.x = min(straight_high_point,max(straight_low_point,new_target_distance / 10));
+                message.linear.y = 0;
+                message.linear.z = 0;
+
+                message.angular.x = 0;
+                message.angular.y = 0;
+                message.angular.z = 0 ;
+                if(new_target_distance*target_distance<0){
+                    target_distance=0;
+                    break;
+                }
+                speedPub->publish(message);
+                frequency.sleep();
+            }
+            message.linear.x = 0;
         }
         speedPub->publish(message);
     }
