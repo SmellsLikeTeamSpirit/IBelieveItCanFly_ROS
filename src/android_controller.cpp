@@ -21,6 +21,7 @@ struct data_t
 
 geometry_msgs::Twist message;
 boost::mutex queue_mutex;
+boost::mutex connection_mutex;
 bool connected = false;
 
 const short _PORT = 7575;
