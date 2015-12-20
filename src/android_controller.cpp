@@ -21,8 +21,8 @@ struct data_t
 
 geometry_msgs::Twist message;
 boost::mutex queue_mutex;
-boost::mutex connection_mutex;
 bool connected = false;
+
 const short _PORT = 7575;
 
 const double PI  = M_PI;
@@ -67,6 +67,9 @@ void execute_worker(deque<data_t> *process_queue, ros::Publisher* speedPub)
             continue;
         }
         queue_mutex.unlock();
+
+        if((ros::Time::now() - current_data.time).toSec() < 30)
+            continue;
 
         if(current_data.joystick == 1) {
             if(!current_data.power == 0.0) {
@@ -215,6 +218,7 @@ int main(int argc, char *argv[])
             connected=false;
             connection_mutex.unlock();
             ROS_WARN("Disconnecting");
+            worker_thread.join();
         }
     }
     catch (std::exception exc)
