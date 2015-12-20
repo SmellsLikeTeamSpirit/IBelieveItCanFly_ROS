@@ -20,9 +20,11 @@ struct data_t
 };
 
 geometry_msgs::Twist message;
+
 boost::mutex queue_mutex;
 boost::mutex connection_mutex;
 bool connected = false;
+boost::thread* worker_thread;
 
 const short _PORT = 7575;
 
@@ -30,6 +32,7 @@ const double PI  = M_PI;
 const double PI_2 = PI / 2;
 const double PI_4 = PI / 4;
 const double PI_3_4 =  3 * PI / 4;
+
 
 void endianconvert(uint8_t *in) {
     uint8_t tmp[8];
@@ -43,6 +46,12 @@ void endianconvert(uint8_t *in) {
 
 void sigint_handler(int sig) {
     ROS_INFO("Exiting");
+    connection_mutex.lock();
+    connected = false;
+    connection_mutex.unlock();
+    if(worker_thread != NULL) {
+        worker_thread->join();
+    }
     exit(EXIT_SUCCESS);
 }
 
@@ -69,7 +78,7 @@ void execute_worker(deque<data_t> *process_queue, ros::Publisher* speedPub)
         }
         queue_mutex.unlock();
 
-        if((ros::Time::now() - current_data.time).toSec() < 30)
+        if((ros::Time::now() - current_data.time).toSec() > 30)
             continue;
 
         if(current_data.joystick == 1) {
@@ -147,13 +156,12 @@ int main(int argc, char *argv[])
 {
     ros::init(argc, argv, "android_controller_node");
     ros::NodeHandle _nh;
-
     ros::Publisher speedPub = _nh.advertise<geometry_msgs::Twist>("/cmd_vel", 10);
-
 
     signal(SIGINT, sigint_handler);
 
     deque<data_t> process_queue;
+    worker_thread = NULL;
 
     ROS_INFO("Starting server...");
 
@@ -173,7 +181,7 @@ int main(int argc, char *argv[])
             connection_mutex.lock();
             connected=true;
             connection_mutex.unlock();
-            boost::thread worker_thread(execute_worker, &process_queue, &speedPub);
+            worker_thread = new boost::thread(execute_worker, &process_queue, &speedPub);
 
             while(sock.is_open()) {
 
@@ -211,7 +219,6 @@ int main(int argc, char *argv[])
                 queue_mutex.lock();
                 process_queue.push_back(data);
                 queue_mutex.unlock();
-
                 start = ros::Time::now();
             }
             sock.close();
@@ -219,7 +226,9 @@ int main(int argc, char *argv[])
             connected=false;
             connection_mutex.unlock();
             ROS_WARN("Disconnecting");
-            worker_thread.join();
+            worker_thread->join();
+            delete worker_thread;
+            worker_thread = NULL;
         }
     }
     catch (std::exception exc)
