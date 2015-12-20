@@ -157,6 +157,7 @@ void execute_worker(deque<data_t> *process_queue, ros::Publisher* speedPub)
         else if(current_data.joystick == 3) {
             target_distance = current_data.power;
             ros::Rate frequency(10);
+            previous_time = ros::Time::now();
             while(true){
                 double time_ellapsed = (ros::Time::now()-previous_time).toSec();
                 double new_target_distance = target_distance - time_ellapsed*message.linear.x;
@@ -171,6 +172,8 @@ void execute_worker(deque<data_t> *process_queue, ros::Publisher* speedPub)
                     target_distance=0;
                     break;
                 }
+                target_distance = new_target_distance;
+                previous_time = ros::Time::now();
                 speedPub->publish(message);
                 frequency.sleep();
             }
