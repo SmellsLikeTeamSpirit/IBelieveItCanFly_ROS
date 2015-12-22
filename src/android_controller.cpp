@@ -179,8 +179,55 @@ void execute_worker(deque<data_t> *process_queue, ros::Publisher* speedPub)
             }
             message.linear.x = 0;
         }
+        else if(current_data.joystick == 4) {
+         target_angle = PI*current_data.angle / 180;
+         ros::Rate frequency(10);
+         previous_time = ros::Time::now();
+         while(true){
+             if(PI*current_data.angle / 180>0){
+                 double time_ellapsed = (ros::Time::now()-previous_time).toSec();
+                 double new_target_angle = target_angle - time_ellapsed*message.angular.z;
+                 message.linear.x = 0;
+                 message.linear.y = 0;
+                 message.linear.z = 0;
+
+                 message.angular.x = 0;
+                 message.angular.y = 0;
+                 message.angular.z = min(straight_high_point,max(straight_low_point,new_target_angle/ 10));
+                 if(new_target_angle*target_angle<0){
+                     target_angle=0;
+                     break;
+                 }
+                 target_angle = new_target_angle;
+                 previous_time = ros::Time::now();
+                 speedPub->publish(message);
+                 frequency.sleep();
+             }
+             else{
+                 double time_ellapsed = (ros::Time::now()-previous_time).toSec();
+                 double new_target_angle = target_angle - time_ellapsed*message.angular.z;
+                 message.linear.x = 0;
+                 message.linear.y = 0;
+                 message.linear.z = 0;
+
+                 message.angular.x = 0;
+                 message.angular.y = 0;
+                 message.angular.z = min(-straight_high_point,max(-straight_low_point,new_target_angle/ 10));
+                 if(new_target_angle*target_angle<0){
+                     target_angle=0;
+                     break;
+                 }
+                 target_angle = new_target_angle;
+                 previous_time = ros::Time::now();
+                 speedPub->publish(message);
+                 frequency.sleep();
+             }
+         }
+         message.angular.z=0;
+        }
         speedPub->publish(message);
     }
+
 }
 
 int main(int argc, char *argv[])
