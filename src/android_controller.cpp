@@ -3,6 +3,7 @@
 #include <exception>
 #include <ros/ros.h>
 #include <geometry_msgs/Twist.h>
+#include "sensor_msgs/LaserScan.h"
 #include <boost/asio.hpp>
 #include <boost/thread.hpp>
 #include <signal.h>
@@ -24,6 +25,7 @@ geometry_msgs::Twist message;
 
 boost::mutex queue_mutex;
 boost::mutex connection_mutex;
+boost::mutex laser_mutex;
 bool connected = false;
 boost::thread* worker_thread;
 
@@ -33,8 +35,8 @@ const double PI  = M_PI;
 const double PI_2 = PI / 2;
 const double PI_4 = PI / 4;
 const double PI_3_4 =  3 * PI / 4;
-const double straight_low_point =0.1;
-const double straight_high_point =0.7;
+const double low_speed =0.1;
+const double high_speed =0.7;
 
 
 void endianconvert(uint8_t *in) {
@@ -161,7 +163,7 @@ void execute_worker(deque<data_t> *process_queue, ros::Publisher* speedPub)
             while(true){
                 double time_ellapsed = (ros::Time::now()-previous_time).toSec();
                 double new_target_distance = target_distance - time_ellapsed*message.linear.x;
-                message.linear.x = min(straight_high_point,max(straight_low_point,new_target_distance / 10));
+                message.linear.x = min(high_speed,max(low_speed,new_target_distance / 10));
                 message.linear.y = 0;
                 message.linear.z = 0;
 
@@ -193,7 +195,7 @@ void execute_worker(deque<data_t> *process_queue, ros::Publisher* speedPub)
 
                  message.angular.x = 0;
                  message.angular.y = 0;
-                 message.angular.z = min(straight_high_point,max(straight_low_point,new_target_angle/ 10));
+                 message.angular.z = min(high_speed,max(low_speed,new_target_angle/ 10));
                  if(new_target_angle*target_angle<0){
                      target_angle=0;
                      break;
@@ -212,7 +214,7 @@ void execute_worker(deque<data_t> *process_queue, ros::Publisher* speedPub)
 
                  message.angular.x = 0;
                  message.angular.y = 0;
-                 message.angular.z = min(-straight_high_point,max(-straight_low_point,new_target_angle/ 10));
+                 message.angular.z = min(-high_speed,max(-low_speed,new_target_angle/ 10));
                  if(new_target_angle*target_angle<0){
                      target_angle=0;
                      break;
@@ -225,6 +227,32 @@ void execute_worker(deque<data_t> *process_queue, ros::Publisher* speedPub)
          }
          message.angular.z=0;
         }
+        else if(current_data.joystick == 5) {
+            target_distance = current_data.power;
+            ros::Rate frequency(10);
+            previous_time = ros::Time::now();
+            while(true){
+                double time_ellapsed = (ros::Time::now()-previous_time).toSec();
+                double new_target_distance = target_distance - time_ellapsed*message.linear.x;
+                message.linear.x = 0;
+                message.linear.y = 0;
+                message.linear.z = min(high_speed,max(low_speed,new_target_distance / 10));
+
+                message.angular.x = 0;
+                message.angular.y = 0;
+                message.angular.z = 0;
+                if(new_target_distance*target_distance<0){
+                    target_distance=0;
+                    break;
+                }
+                target_distance = new_target_distance;
+                previous_time = ros::Time::now();
+                speedPub->publish(message);
+                frequency.sleep();
+            }
+            message.linear.z = 0;
+        }
+
         speedPub->publish(message);
     }
 
