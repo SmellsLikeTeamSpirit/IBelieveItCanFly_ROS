@@ -26,7 +26,9 @@ geometry_msgs::Twist message;
 boost::mutex queue_mutex;
 boost::mutex connection_mutex;
 boost::mutex laser_mutex;
+
 bool connected = false;
+bool busy = false;
 boost::thread* worker_thread;
 
 const short _PORT = 7575;
@@ -35,21 +37,23 @@ const double PI  = M_PI;
 const double PI_2 = PI / 2;
 const double PI_4 = PI / 4;
 const double PI_3_4 =  3 * PI / 4;
-const double low_speed =0.1;
-const double high_speed =0.7;
+const double low_speed = 0.1;
+const double high_speed = 0.7;
 
 
-void endianconvert(uint8_t *in) {
+void endianconvert(uint8_t *in)
+{
     uint8_t tmp[8];
     for (short i = 0; i < 8; ++i) {
-        tmp[7-i] = in[i];
+        tmp[7 - i] = in[i];
     }
     for (short i = 0; i < 8; ++i) {
         in[i] = tmp[i];
     }
 }
 
-void sigint_handler(int sig) {
+void sigint_handler(int sig)
+{
     ROS_INFO("Exiting");
     connection_mutex.lock();
     connected = false;
@@ -65,29 +69,47 @@ void execute_worker(deque<data_t> *process_queue, ros::Publisher* speedPub)
     double target_distance = 0.0;
     double target_angle = 0.0;
     ros::Time previous_time;
-    while(true){
+    data_t current_data;
+    while(true) {
         connection_mutex.lock();
-        if(!connected){
+        if(!connected) {
             connection_mutex.unlock();
             break;
         }
         connection_mutex.unlock();
 
-        data_t current_data;
-
         queue_mutex.lock();
-        if(!process_queue->empty()){
-            current_data = process_queue->front();
+        if( !process_queue->empty() ) {
+            data_t tmp_data = process_queue->front();
             process_queue->pop_front();
+            if(!busy) {
+                current_data = tmp_data;
+                if( (ros::Time::now() - current_data.time).toSec() > 30 )
+                    continue;
+            }
+            else if(busy && tmp_data.joystick == 0) {
+                message.linear.x = 0;
+                message.linear.y = 0;
+                message.linear.z = 0;
+
+                message.angular.x = 0;
+                message.angular.y = 0;
+                message.angular.z = 0;
+                target_angle = 0.0;
+                target_distance = 0.0;
+                speedPub->publish(message);
+                queue_mutex.unlock();
+                busy = false;
+                continue;
+            }
         }
-        else{
+        else {
             queue_mutex.unlock();
-            continue;
+            if(!busy)
+                continue;
         }
         queue_mutex.unlock();
 
-        if((ros::Time::now() - current_data.time).toSec() > 30)
-            continue;
 
         if(current_data.joystick == 1) {
             if(!current_data.power == 0.0) {
@@ -136,11 +158,11 @@ void execute_worker(deque<data_t> *process_queue, ros::Publisher* speedPub)
                 message.angular.y = 0;
                 message.angular.z = 0;
             }
-            else if((current_data.angle > PI_3_4 && current_data.angle < PI)
-                    || (current_data.angle < -PI_3_4 && current_data.angle > -PI) ) {
+            else if( (current_data.angle > PI_3_4 && current_data.angle < PI)
+                     || (current_data.angle < -PI_3_4 && current_data.angle > -PI) ) {
                 message.linear.x = 0;
                 message.linear.y = 0;
-                message.linear.z = - current_data.power / 200;
+                message.linear.z = -current_data.power / 200;
 
                 message.angular.x = 0;
                 message.angular.y = 0;
@@ -153,109 +175,91 @@ void execute_worker(deque<data_t> *process_queue, ros::Publisher* speedPub)
 
                 message.angular.x = 0;
                 message.angular.y = 0;
-                message.angular.z = (current_data.angle * current_data.power) / 200 ;
+                message.angular.z = (current_data.angle * current_data.power) / 200;
             }
         }
         else if(current_data.joystick == 3) {
-            target_distance = current_data.power;
-            ros::Rate frequency(10);
-            previous_time = ros::Time::now();
-            while(true){
-                double time_ellapsed = (ros::Time::now()-previous_time).toSec();
-                double new_target_distance = target_distance - time_ellapsed*message.linear.x;
-                message.linear.x = min(high_speed,max(low_speed,new_target_distance / 10));
-                message.linear.y = 0;
-                message.linear.z = 0;
+            if(!busy) {
+                target_distance = current_data.power;
+            }
+            double time_ellapsed = (ros::Time::now() - previous_time).toSec();
+            double new_target_distance = target_distance - time_ellapsed * message.linear.x;
+            message.linear.x = min( high_speed, max(low_speed, new_target_distance / 10) );
+            message.linear.y = 0;
+            message.linear.z = 0;
 
-                message.angular.x = 0;
-                message.angular.y = 0;
-                message.angular.z = 0 ;
-                if(new_target_distance*target_distance<0){
-                    target_distance=0;
-                    break;
-                }
+            message.angular.x = 0;
+            message.angular.y = 0;
+            message.angular.z = 0;
+            if(new_target_distance * target_distance < 0) {
+                target_distance = 0;
+                message.linear.x = 0;
+                busy = false;
+            }
+            else {
                 target_distance = new_target_distance;
                 previous_time = ros::Time::now();
-                speedPub->publish(message);
-                frequency.sleep();
+                busy = true;
             }
-            message.linear.x = 0;
         }
         else if(current_data.joystick == 4) {
-         target_angle = PI*current_data.angle / 180;
-         ros::Rate frequency(10);
-         previous_time = ros::Time::now();
-         while(true){
-             if(PI*current_data.angle / 180>0){
-                 double time_ellapsed = (ros::Time::now()-previous_time).toSec();
-                 double new_target_angle = target_angle - time_ellapsed*message.angular.z;
-                 message.linear.x = 0;
-                 message.linear.y = 0;
-                 message.linear.z = 0;
+            if(!busy) {
+                target_angle = PI * current_data.angle / 180;
+            }
+            double time_ellapsed = (ros::Time::now() - previous_time).toSec();
+            double new_target_angle = target_angle - time_ellapsed * message.angular.z;
+            message.linear.x = 0;
+            message.linear.y = 0;
+            message.linear.z = 0;
 
-                 message.angular.x = 0;
-                 message.angular.y = 0;
-                 message.angular.z = min(high_speed,max(low_speed,new_target_angle/ 10));
-                 if(new_target_angle*target_angle<0){
-                     target_angle=0;
-                     break;
-                 }
-                 target_angle = new_target_angle;
-                 previous_time = ros::Time::now();
-                 speedPub->publish(message);
-                 frequency.sleep();
-             }
-             else{
-                 double time_ellapsed = (ros::Time::now()-previous_time).toSec();
-                 double new_target_angle = target_angle - time_ellapsed*message.angular.z;
-                 message.linear.x = 0;
-                 message.linear.y = 0;
-                 message.linear.z = 0;
+            message.angular.x = 0;
+            message.angular.y = 0;
 
-                 message.angular.x = 0;
-                 message.angular.y = 0;
-                 message.angular.z = min(-high_speed,max(-low_speed,new_target_angle/ 10));
-                 if(new_target_angle*target_angle<0){
-                     target_angle=0;
-                     break;
-                 }
-                 target_angle = new_target_angle;
-                 previous_time = ros::Time::now();
-                 speedPub->publish(message);
-                 frequency.sleep();
-             }
-         }
-         message.angular.z=0;
+            if( (PI * current_data.angle) / 180 > 0 ) {
+                message.angular.z = min( high_speed, max(low_speed, new_target_angle / 10) );
+            }
+            else {
+                message.angular.z = max( -high_speed, min(-low_speed, new_target_angle / 10) );
+            }
+
+            if(new_target_angle * target_angle<0) {
+                target_angle = 0;
+                message.angular.z = 0;
+                busy = false;
+            }
+            else {
+                target_angle = new_target_angle;
+                previous_time = ros::Time::now();
+                busy = true;
+            }
         }
         else if(current_data.joystick == 5) {
-            target_distance = current_data.power;
-            ros::Rate frequency(10);
-            previous_time = ros::Time::now();
-            while(true){
-                double time_ellapsed = (ros::Time::now()-previous_time).toSec();
-                double new_target_distance = target_distance - time_ellapsed*message.linear.x;
-                message.linear.x = 0;
-                message.linear.y = 0;
-                message.linear.z = min(high_speed,max(low_speed,new_target_distance / 10));
+            if(!busy) {
+                target_distance = current_data.power;
+            }
+            double time_ellapsed = (ros::Time::now() - previous_time).toSec();
+            double new_target_distance = target_distance - time_ellapsed * message.linear.z;
+            message.linear.x = 0;
+            message.linear.y = 0;
+            message.linear.z = min( high_speed, max(low_speed, new_target_distance / 10) );
 
-                message.angular.x = 0;
-                message.angular.y = 0;
-                message.angular.z = 0;
-                if(new_target_distance*target_distance<0){
-                    target_distance=0;
-                    break;
-                }
+            message.angular.x = 0;
+            message.angular.y = 0;
+            message.angular.z = 0;
+            if(new_target_distance * target_distance<0) {
+                target_distance = 0;
+                message.linear.z = 0;
+                busy = false;
+            }
+            else {
                 target_distance = new_target_distance;
                 previous_time = ros::Time::now();
-                speedPub->publish(message);
-                frequency.sleep();
+                busy = true;
             }
-            message.linear.z = 0;
         }
-
+        previous_time = ros::Time::now();
         speedPub->publish(message);
     }
-
 }
 
 int main(int argc, char *argv[])
@@ -274,54 +278,52 @@ int main(int argc, char *argv[])
     try
     {
         boost::asio::io_service ioserv;
-        tcp::acceptor accptr(ioserv, tcp::endpoint(tcp::v4(), _PORT));
+        tcp::acceptor accptr( ioserv, tcp::endpoint(tcp::v4(), _PORT) );
 
-        while(ros::ok()) {
-
+        while( ros::ok() ) {
             ROS_INFO("Waiting for client");
             tcp::socket sock(ioserv);
             accptr.accept(sock);
-            ROS_INFO("New connection from %s", sock.remote_endpoint().address().to_string().c_str());
+            ROS_INFO( "New connection from %s", sock.remote_endpoint().address().to_string().c_str() );
             ros::Time start = ros::Time::now();
 
             connection_mutex.lock();
-            connected=true;
+            connected = true;
             connection_mutex.unlock();
             worker_thread = new boost::thread(execute_worker, &process_queue, &speedPub);
 
-            while(sock.is_open()) {
-
+            while( sock.is_open() ) {
                 uint8_t joystick;
                 boost::system::error_code ec;
-                boost::asio::read(sock, boost::asio::buffer(static_cast<void*>(&joystick), sizeof(char)), ec);
+                boost::asio::read(sock, boost::asio::buffer( static_cast<void*>(&joystick), sizeof(char) ), ec);
                 if(ec == boost::asio::error::eof) {
                     ROS_WARN("Remote closed connection");
                     break;
                 }
 
                 uint8_t __angle[8], __power[8];
-                boost::asio::read(sock, boost::asio::buffer(static_cast<void*>(__angle), sizeof(__angle)), ec);
+                boost::asio::read(sock, boost::asio::buffer( static_cast<void*>(__angle), sizeof(__angle) ), ec);
                 if(ec == boost::asio::error::eof) {
                     ROS_WARN("Remote closed connection");
                     break;
                 }
                 endianconvert(__angle);
-                boost::asio::read(sock, boost::asio::buffer(static_cast<void*>(__power), sizeof(__power)), ec);
+                boost::asio::read(sock, boost::asio::buffer( static_cast<void*>(__power), sizeof(__power) ), ec);
                 if(ec == boost::asio::error::eof) {
                     ROS_WARN("Remote closed connection");
                     break;
                 }
                 endianconvert(__power);
-                double angle = *((double*)__angle);
-                double power = *((double*)__power);
+                double angle = *( (double*)__angle );
+                double power = *( (double*)__power );
 
                 ROS_INFO("From jostick(%d) Angle : %f Power %f", (int)joystick, angle, power);
 
                 data_t data;
-                data.joystick=joystick;
-                data.angle=angle;
-                data.power=power;
-                data.time=ros::Time::now();
+                data.joystick = joystick;
+                data.angle = angle;
+                data.power = power;
+                data.time = ros::Time::now();
                 queue_mutex.lock();
                 process_queue.push_back(data);
                 queue_mutex.unlock();
@@ -329,7 +331,7 @@ int main(int argc, char *argv[])
             }
             sock.close();
             connection_mutex.lock();
-            connected=false;
+            connected = false;
             connection_mutex.unlock();
             ROS_WARN("Disconnecting");
             worker_thread->join();
@@ -339,7 +341,7 @@ int main(int argc, char *argv[])
     }
     catch (std::exception exc)
     {
-        ROS_ERROR("Exception thrown: %s", exc.what());
+        ROS_ERROR( "Exception thrown: %s", exc.what() );
         exit(EXIT_FAILURE);
     }
 
