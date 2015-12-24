@@ -1,14 +1,15 @@
 #include <iostream>
 #include <cmath>
+#include <deque>
+#include <cmath>
+#include <limits>
 #include <exception>
 #include <ros/ros.h>
 #include <geometry_msgs/Twist.h>
-#include "sensor_msgs/LaserScan.h"
+#include <sensor_msgs/LaserScan.h>
 #include <boost/asio.hpp>
 #include <boost/thread.hpp>
 #include <signal.h>
-#include <deque>
-#include <cmath>
 
 using namespace std;
 using boost::asio::ip::tcp;
@@ -29,6 +30,7 @@ boost::mutex laser_mutex;
 
 bool connected = false;
 bool busy = false;
+float average_scan;
 boost::thread* worker_thread;
 
 const short _PORT = 7575;
@@ -64,6 +66,38 @@ void sigint_handler(int sig)
     exit(EXIT_SUCCESS);
 }
 
+void laser_callback(const sensor_msgs::LaserScan::ConstPtr& msg)
+{
+    connection_mutex.lock();
+    if(!connected) {
+        connection_mutex.unlock();
+        return;
+    }
+    connection_mutex.unlock();
+
+    const std::vector<float>& laser_ranges = msg->ranges;
+    int size = laser_ranges.size() / 27;
+    int size2 = size * 14;
+    int num_of_legal = 0;
+    float central_scans = 0;
+    for (int i = size * 13; i < size2 ; ++i) {
+         if(laser_ranges[i] < msg->range_min ||
+                 laser_ranges[i] > msg->range_max ||
+                 isnan(laser_ranges[i]) ||
+                 fabs(laser_ranges[i]) == std::numeric_limits<float>::infinity() ) {
+
+             continue;
+         }
+
+         num_of_legal++;
+         central_scans += laser_ranges[i];
+    }
+
+    laser_mutex.lock();
+    average_scan = central_scans / num_of_legal;
+    laser_mutex.unlock();
+}
+
 void execute_worker(deque<data_t> *process_queue, ros::Publisher* speedPub)
 {
     double target_distance = 0.0;
@@ -84,8 +118,10 @@ void execute_worker(deque<data_t> *process_queue, ros::Publisher* speedPub)
             process_queue->pop_front();
             if(!busy) {
                 current_data = tmp_data;
-                if( (ros::Time::now() - current_data.time).toSec() > 30 )
+                if( (ros::Time::now() - current_data.time).toSec() > 30 ) {
+                    ros::spinOnce();
                     continue;
+                }
             }
             else if(busy && tmp_data.joystick == 0) {
                 message.linear.x = 0;
@@ -100,13 +136,16 @@ void execute_worker(deque<data_t> *process_queue, ros::Publisher* speedPub)
                 speedPub->publish(message);
                 queue_mutex.unlock();
                 busy = false;
+                ros::spinOnce();
                 continue;
             }
         }
         else {
             queue_mutex.unlock();
-            if(!busy)
+            if(!busy) {
+                ros::spinOnce();
                 continue;
+            }
         }
         queue_mutex.unlock();
 
@@ -257,8 +296,30 @@ void execute_worker(deque<data_t> *process_queue, ros::Publisher* speedPub)
                 busy = true;
             }
         }
+        else if(current_data.joystick == 6) {
+            laser_mutex.lock();
+            float avg = average_scan;
+            laser_mutex.unlock();
+
+            message.linear.x = min( high_speed, max(low_speed, (avg - 0.5) / 10) );
+            message.linear.y = 0;
+            message.linear.z = 0;
+
+            message.angular.x = 0;
+            message.angular.y = 0;
+            message.angular.z = 0;
+            if(avg < 0.5) {
+                target_distance = 0;
+                message.linear.x = 0;
+                busy = false;
+            }
+            else {
+                busy = true;
+            }
+        }
         previous_time = ros::Time::now();
         speedPub->publish(message);
+        ros::spinOnce();
     }
 }
 
@@ -267,6 +328,8 @@ int main(int argc, char *argv[])
     ros::init(argc, argv, "android_controller_node");
     ros::NodeHandle _nh;
     ros::Publisher speedPub = _nh.advertise<geometry_msgs::Twist>("/cmd_vel", 10);
+
+    ros::Subscriber sub = _nh.subscribe("scan", 1000, laser_callback);
 
     signal(SIGINT, sigint_handler);
 
